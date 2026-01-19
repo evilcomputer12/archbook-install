@@ -1,15 +1,23 @@
 #!/bin/bash
 #
-# Arch Linux Installer for MacBook Air Mid 2012 (ALL-IN-ONE)
-# - MATE desktop + LightDM
-# - Intel HD4000 stack + TearFree
-# - MacBook trackpad (libinput tap + natural scroll)
-# - GRUB2 (traditional menu) + Mac-safe EFI fallback (BOOTX64.EFI)
-# - Continues on errors (won't exit on missing packages)
+# Arch Linux Installer for MacBook Air Mid 2012
+# BASE INSTALL (from Arch ISO) + drops a POST-INSTALL script in the new user home
 #
-# Run from Arch ISO:
-#   chmod +x install.sh
-#   sudo ./install.sh
+# Base installs:
+# - MATE Desktop
+# - LightDM + **Slick Greeter** (nice-looking greeter)  0
+# - Intel HD4000 stack + modesetting TearFree
+# - MacBook trackpad (libinput tap + natural scroll)
+# - Broadcom WiFi DKMS + bluetooth
+# - TLP + thermald
+# - **GRUB2 traditional menu** + Mac-safe EFI fallback (BOOTX64.EFI)
+#
+# Post-install (run AFTER first boot, as your normal user):
+# - Microsoft Edge, mbpfan, VS Code, GitHub Desktop, Android Studio, Flutter
+# - VirtualBox, QEMU/KVM, Wine, Docker
+# - Fonts (MS + others), LibreOffice, VLC, Spotify, WhatsApp, Viber, Teams, etc.
+#
+# Continues on errors - won't exit on missing packages
 #
 
 set +e
@@ -26,12 +34,14 @@ print_warning() { echo -e "${YELLOW}[!]${NC} $1"; }
 print_error() { echo -e "${RED}[✗]${NC} $1"; }
 
 HOSTNAME_DEFAULT="macbook-arch"
+TIMEZONE_DEFAULT="Europe/Skopje"
 
 clear
 cat << "EOF"
 ╔══════════════════════════════════════════════════════════╗
 ║   Arch Linux Installer - MacBook Air Mid 2012           ║
-║   MATE + LightDM + GRUB2 (UEFI) + HD4000 + Trackpad     ║
+║   MATE + LightDM (Slick) + GRUB + HD4000 + Trackpad     ║
+║   Creates: ~/postinstall.sh (Edge + mbpfan + Dev + VM)  ║
 ╚══════════════════════════════════════════════════════════╝
 EOF
 echo ""
@@ -43,7 +53,14 @@ fi
 
 print_info "Checking internet..."
 if ! ping -c 1 archlinux.org &> /dev/null; then
-  print_error "No internet! Connect WiFi first (iwctl) and retry."
+  print_error "No internet! Connect WiFi first:"
+  echo ""
+  echo "  iwctl"
+  echo "  station wlan0 scan"
+  echo "  station wlan0 get-networks"
+  echo "  station wlan0 connect \"YourWiFi\""
+  echo "  exit"
+  echo ""
   exit 1
 fi
 print_msg "Internet connected!"
@@ -62,25 +79,7 @@ while true; do
 done
 
 echo ""
-print_info "Set passwords now:"
-read -s -p "Enter ROOT password: " ROOT_PASS; echo
-read -s -p "Confirm ROOT password: " ROOT_PASS2; echo
-if [ "$ROOT_PASS" != "$ROOT_PASS2" ]; then
-  print_error "Root passwords don't match!"
-  exit 1
-fi
-
-echo ""
-read -s -p "Enter password for user '${USERNAME}': " USER_PASS; echo
-read -s -p "Confirm password for '${USERNAME}': " USER_PASS2; echo
-if [ "$USER_PASS" != "$USER_PASS2" ]; then
-  print_error "User passwords don't match!"
-  exit 1
-fi
-print_msg "Passwords set!"
-
-echo ""
-print_info "Select your region (timezone):"
+print_info "Select your region/timezone:"
 echo "1) Europe/Skopje"
 echo "2) Europe/London"
 echo "3) Europe/Berlin"
@@ -99,12 +98,28 @@ case "$TZ_CHOICE" in
   5) TIMEZONE="America/Los_Angeles" ;;
   6) TIMEZONE="Asia/Tokyo" ;;
   7) TIMEZONE="UTC" ;;
-  8)
-     read -p "Enter timezone (example: Europe/Paris): " TIMEZONE
-     ;;
-  *) TIMEZONE="Europe/Skopje" ;;
+  8) read -p "Enter timezone (example: Europe/Paris): " TIMEZONE ;;
+  *) TIMEZONE="$TIMEZONE_DEFAULT" ;;
 esac
-print_msg "Timezone: $TIMEZONE"
+print_msg "Timezone set: $TIMEZONE"
+
+echo ""
+print_info "Set passwords now:"
+read -s -p "Enter ROOT password: " ROOT_PASS; echo
+read -s -p "Confirm ROOT password: " ROOT_PASS2; echo
+if [ "$ROOT_PASS" != "$ROOT_PASS2" ]; then
+  print_error "Root passwords don't match!"
+  exit 1
+fi
+
+echo ""
+read -s -p "Enter password for user '${USERNAME}': " USER_PASS; echo
+read -s -p "Confirm password for '${USERNAME}': " USER_PASS2; echo
+if [ "$USER_PASS" != "$USER_PASS2" ]; then
+  print_error "User passwords don't match!"
+  exit 1
+fi
+print_msg "Passwords set!"
 
 echo ""
 print_info "Available disks:"
@@ -139,7 +154,7 @@ fi
 umount -R /mnt 2>/dev/null || true
 
 echo ""
-print_info "[1/9] Partitioning (UEFI: EFI + root)..."
+print_info "[1/7] Partitioning $DISK (UEFI: EFI + root)..."
 wipefs -af "$DISK" || true
 sgdisk --zap-all "$DISK" || true
 sgdisk -o "$DISK" || true
@@ -150,38 +165,52 @@ partprobe "$DISK" || true
 sleep 2
 print_msg "Disk partitioned!"
 
-echo ""
-print_info "[2/9] Formatting partitions..."
+print_info "[2/7] Formatting partitions..."
 mkfs.fat -F32 "$PART_EFI" || true
 mkfs.ext4 -F "$PART_ROOT" || true
 print_msg "Partitions formatted!"
 
-echo ""
-print_info "[3/9] Mounting partitions (EFI at /boot/efi — recommended)..."
+print_info "[3/7] Mounting partitions (EFI -> /boot/efi)..."
 mount "$PART_ROOT" /mnt || true
 mkdir -p /mnt/boot/efi
 mount "$PART_EFI" /mnt/boot/efi || true
-print_msg "Mounted root at /mnt and EFI at /mnt/boot/efi"
+print_msg "Partitions mounted!"
 
-echo ""
-print_info "[4/9] Installing base system..."
+print_info "[4/7] Updating mirrors..."
+if command -v reflector &> /dev/null; then
+  reflector --country Germany,France,Netherlands --latest 10 --protocol https --sort rate --save /etc/pacman.d/mirrorlist 2>/dev/null || true
+fi
+print_msg "Mirrors updated!"
+
+print_info "[5/7] Installing base + desktop + MacBook essentials..."
 pacstrap -K /mnt \
   base base-devel \
-  linux linux-headers linux-firmware \
-  intel-ucode \
+  linux linux-headers linux-firmware intel-ucode \
   nano vim git wget curl \
-  networkmanager \
-  sudo efibootmgr \
-  dosfstools mtools \
-  htop || true
-print_msg "Base installed!"
+  networkmanager network-manager-applet \
+  sudo efibootmgr grub os-prober \
+  dosfstools mtools htop \
+  xorg-server xorg-xinit xorg-xrandr \
+  xf86-input-libinput libinput \
+  mesa vulkan-intel intel-media-driver libva-intel-driver libva-utils \
+  pipewire pipewire-alsa pipewire-pulse wireplumber \
+  mate mate-extra \
+  lightdm lightdm-slick-greeter \
+  gvfs gvfs-mtp file-roller \
+  broadcom-wl-dkms dkms \
+  tlp tlp-rdw powertop \
+  lm_sensors acpi thermald smartmontools ethtool \
+  bluez bluez-utils \
+  firefox \
+  ntfs-3g unzip zip p7zip unrar \
+  okular poppler-data || true
+print_msg "Base system installed!"
 
-echo ""
-print_info "[5/9] Generating fstab..."
+print_info "[6/7] Generating fstab..."
 genfstab -U /mnt >> /mnt/etc/fstab || true
 print_msg "fstab generated!"
 
-print_info "[6/9] Creating chroot setup script..."
+print_info "[7/7] Creating and running chroot configuration script..."
 cat > /mnt/root/setup.sh << SETUP_SCRIPT
 #!/bin/bash
 set +e
@@ -191,9 +220,8 @@ HOSTNAME="${HOSTNAME}"
 TIMEZONE="${TIMEZONE}"
 ROOT_PASS="${ROOT_PASS}"
 USER_PASS="${USER_PASS}"
-DISK_NAME="${DISK_NAME}"
 
-echo "[A] Timezone + clock..."
+echo "[A] Timezone & clock..."
 ln -sf "/usr/share/zoneinfo/\${TIMEZONE}" /etc/localtime || true
 hwclock --systohc || true
 
@@ -203,7 +231,7 @@ locale-gen || true
 echo "LANG=en_US.UTF-8" > /etc/locale.conf
 echo "KEYMAP=us" > /etc/vconsole.conf
 
-echo "[C] Hostname..."
+echo "[C] Hostname & hosts..."
 echo "\${HOSTNAME}" > /etc/hostname
 cat > /etc/hosts << EOF
 127.0.0.1   localhost
@@ -214,7 +242,6 @@ EOF
 echo "[D] Pacman tweaks + multilib..."
 sed -i 's/^#Color/Color/' /etc/pacman.conf || true
 sed -i 's/^#ParallelDownloads/ParallelDownloads/' /etc/pacman.conf || true
-# Enable multilib (Wine/32-bit libs)
 sed -i '/^\[multilib\]/,/^Include/s/^#//' /etc/pacman.conf || true
 pacman -Sy || true
 
@@ -222,37 +249,48 @@ echo "[E] Users + sudo..."
 echo "root:\${ROOT_PASS}" | chpasswd || true
 id -u "\${USERNAME}" &>/dev/null || useradd -m -G wheel,audio,video,input,storage,optical -s /bin/bash "\${USERNAME}"
 echo "\${USERNAME}:\${USER_PASS}" | chpasswd || true
-# Temporary NOPASSWD for installs, reverted at end
+
+# Temporary NOPASSWD for postinstall convenience (we revert in postinstall)
 grep -q '^%wheel ALL=(ALL:ALL) NOPASSWD: ALL' /etc/sudoers || echo "%wheel ALL=(ALL:ALL) NOPASSWD: ALL" >> /etc/sudoers
 
-echo "[F] Enable NetworkManager..."
+echo "[F] Enable services..."
 systemctl enable NetworkManager || true
+systemctl enable bluetooth || true
+systemctl enable tlp || true
+systemctl enable thermald || true
 
-echo "[G] Desktop + display manager (MATE + LightDM)..."
-pacman -S --noconfirm --needed \
-  xorg-server xorg-xinit xorg-xrandr \
-  xf86-input-libinput libinput \
-  mate mate-extra \
-  lightdm lightdm-gtk-greeter lightdm-gtk-greeter-settings \
-  gvfs gvfs-mtp file-roller \
-  network-manager-applet || true
-
-# LightDM greeter
-sed -i 's/^#greeter-session=.*/greeter-session=lightdm-gtk-greeter/' /etc/lightdm/lightdm.conf 2>/dev/null || true
+echo "[G] LightDM + Slick Greeter config..."
+# Set slick greeter as default  1
+sed -i 's/^#greeter-session=.*/greeter-session=lightdm-slick-greeter/' /etc/lightdm/lightdm.conf 2>/dev/null || true
+grep -q '^greeter-session=lightdm-slick-greeter' /etc/lightdm/lightdm.conf 2>/dev/null || \
+  echo 'greeter-session=lightdm-slick-greeter' >> /etc/lightdm/lightdm.conf
 systemctl enable lightdm || true
 
-echo "[H] Audio (PipeWire)..."
-pacman -S --noconfirm --needed \
-  pipewire pipewire-alsa pipewire-pulse wireplumber || true
+# Nice slick greeter defaults (simple + clean). You can change background later.
+cat > /etc/lightdm/slick-greeter.conf << 'SLICK'
+[Greeter]
+background=/usr/share/backgrounds/mate/desktop/Stripes.png
+theme-name=Adwaita
+icon-theme-name=Adwaita
+font-name=Sans 11
+draw-user-backgrounds=false
+show-a11y=false
+show-keyboard=false
+show-hostname=true
+show-power=true
+show-clock=true
+clock-format=%a %d %b %H:%M
+SLICK
 
-echo "[I] Intel HD4000 graphics stack (safe defaults)..."
-# modesetting is the recommended Xorg driver for HD4000; intel ddx kept as optional fallback
+echo "[H] Intel HD4000 + 'if missing then install' safety..."
+# Always ensure these are present (pacman --needed is safe)
 pacman -S --noconfirm --needed \
   mesa lib32-mesa \
   vulkan-intel lib32-vulkan-intel \
   intel-media-driver libva-intel-driver libva-utils \
   xf86-video-intel || true
 
+# Recommended: modesetting (stable) + TearFree
 mkdir -p /etc/X11/xorg.conf.d
 cat > /etc/X11/xorg.conf.d/20-intel.conf << 'INTELCONF'
 Section "Device"
@@ -262,7 +300,7 @@ Section "Device"
 EndSection
 INTELCONF
 
-echo "[J] Trackpad config (tap-to-click + natural scroll)..."
+echo "[I] MacBook trackpad (libinput tap-to-click + natural scroll)..."
 cat > /etc/X11/xorg.conf.d/30-touchpad.conf << 'TP'
 Section "InputClass"
     Identifier "Touchpad"
@@ -275,14 +313,8 @@ Section "InputClass"
 EndSection
 TP
 
-echo "[K] MacBook hardware support (WiFi, power, sensors, bluetooth)..."
-pacman -S --noconfirm --needed \
-  broadcom-wl-dkms dkms linux-headers \
-  tlp tlp-rdw powertop \
-  lm_sensors acpi thermald smartmontools ethtool \
-  bluez bluez-utils || true
-
-cat > /etc/modprobe.d/macbook-broadcom.conf << 'MODCONF'
+echo "[J] Broadcom blacklist + Apple SMC..."
+cat > /etc/modprobe.d/macbook-broadcom.conf << 'MOD'
 blacklist b43
 blacklist b43legacy
 blacklist ssb
@@ -291,27 +323,17 @@ blacklist brcm80211
 blacklist brcmfmac
 blacklist brcmsmac
 blacklist bcma
-MODCONF
+MOD
 
 echo "applesmc" > /etc/modules-load.d/applesmc.conf
 
-systemctl enable bluetooth || true
-systemctl enable tlp || true
-systemctl enable thermald || true
-
-echo "[L] Base apps..."
-pacman -S --noconfirm --needed firefox ntfs-3g unzip zip p7zip unrar okular poppler-data || true
-
-echo "[M] GRUB2 (UEFI) + Mac-safe fallback..."
-pacman -S --noconfirm --needed grub efibootmgr os-prober || true
-
-# Ensure EFI vars are available (sometimes needed in chroot)
+echo "[K] GRUB2 (traditional selectable menu) + Mac-safe fallback..."
 mount -t efivarfs efivarfs /sys/firmware/efi/efivars 2>/dev/null || true
 
-# EFI is mounted at /boot/efi (from the installer)
+# EFI is mounted at /boot/efi
 grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB --recheck || true
 
-# Make a visible, selectable menu
+# Traditional menu
 grep -q '^GRUB_TIMEOUT=' /etc/default/grub && sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=5/' /etc/default/grub || echo 'GRUB_TIMEOUT=5' >> /etc/default/grub
 grep -q '^GRUB_TIMEOUT_STYLE=' /etc/default/grub && sed -i 's/^GRUB_TIMEOUT_STYLE=.*/GRUB_TIMEOUT_STYLE=menu/' /etc/default/grub || echo 'GRUB_TIMEOUT_STYLE=menu' >> /etc/default/grub
 grep -q '^GRUB_DISABLE_OS_PROBER=' /etc/default/grub && sed -i 's/^GRUB_DISABLE_OS_PROBER=.*/GRUB_DISABLE_OS_PROBER=false/' /etc/default/grub || echo 'GRUB_DISABLE_OS_PROBER=false' >> /etc/default/grub
@@ -319,43 +341,230 @@ grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub && sed -i 's/^GRUB_CMDL
 
 grub-mkconfig -o /boot/grub/grub.cfg || true
 
-# Mac firmware sometimes ignores NVRAM entries -> add fallback BOOTX64.EFI
-# This makes the bootloader discoverable even if the GRUB entry doesn't stick.
+# Mac firmware can ignore NVRAM entries -> fallback path helps boot reliably
 if [ -f /boot/efi/EFI/GRUB/grubx64.efi ]; then
   mkdir -p /boot/efi/EFI/BOOT
   cp -f /boot/efi/EFI/GRUB/grubx64.efi /boot/efi/EFI/BOOT/BOOTX64.EFI || true
 fi
 
-echo "[N] Restore normal sudo behavior..."
-sed -i 's/%wheel ALL=(ALL:ALL) NOPASSWD: ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers || true
-
-echo "[O] Done."
+echo "[L] Done."
 SETUP_SCRIPT
 
 chmod +x /mnt/root/setup.sh || true
-
-print_info "[7/9] Running configuration in chroot..."
 arch-chroot /mnt /root/setup.sh || true
 rm -f /mnt/root/setup.sh || true
-print_msg "Chroot configuration finished!"
+
+# ----------------------------
+# Create POST-INSTALL script
+# ----------------------------
+print_info "Writing post-install script to /home/${USERNAME}/postinstall.sh ..."
+
+cat > "/mnt/home/${USERNAME}/postinstall.sh" << 'POSTINSTALL'
+#!/bin/bash
+#
+# Post-Install Extras for MacBook Air 2012 (run as NORMAL USER)
+# Installs: Edge, mbpfan, VS Code, GitHub Desktop, Android Studio, Flutter,
+#           VirtualBox, QEMU/KVM, Wine, Docker, Fonts, Office, Media, Messaging
+#
+set +e
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+print_msg() { echo -e "${GREEN}[✓]${NC} $1"; }
+print_info() { echo -e "${BLUE}[i]${NC} $1"; }
+print_warning() { echo -e "${YELLOW}[!]${NC} $1"; }
+print_error() { echo -e "${RED}[✗]${NC} $1"; }
+
+clear
+cat << "EOF"
+╔══════════════════════════════════════════════════════════╗
+║   Post-Install (Extras) - MacBook Air Mid 2012          ║
+║   Edge • mbpfan • Dev • Virtualization • Fonts • Media  ║
+╚══════════════════════════════════════════════════════════╝
+EOF
+echo ""
+
+if [ "$EUID" -eq 0 ]; then
+  print_error "Don't run as root! Run as your normal user."
+  exit 1
+fi
+
+print_info "Checking internet..."
+ping -c 1 archlinux.org &> /dev/null || { print_error "No internet connection!"; exit 1; }
+print_msg "Internet connected!"
+
+print_info "Ensuring multilib enabled..."
+sudo sed -i '/^\[multilib\]/,/^Include/s/^#//' /etc/pacman.conf || true
+sudo pacman -Sy || true
+print_msg "multilib ready"
+
+print_info "Installing yay (AUR helper) if needed..."
+if ! command -v yay &> /dev/null; then
+  cd /tmp || true
+  git clone https://aur.archlinux.org/yay-bin.git || true
+  cd yay-bin || true
+  makepkg -si --noconfirm || true
+  cd ~ || true
+fi
+print_msg "yay ready"
+
+echo ""
+print_info "[1/9] Microsoft Edge + mbpfan..."
+yay -S --noconfirm --needed microsoft-edge-stable-bin || true
+yay -S --noconfirm --needed mbpfan-git || true
+
+sudo tee /etc/mbpfan.conf >/dev/null << 'MBP'
+[general]
+min_fan_speed = 2000
+max_fan_speed = 6200
+low_temp = 55
+high_temp = 80
+max_temp = 95
+polling_interval = 1
+MBP
+sudo systemctl enable mbpfan 2>/dev/null || true
+print_msg "Edge + mbpfan installed"
+
+echo ""
+print_info "[2/9] VirtualBox..."
+sudo pacman -S --noconfirm --needed virtualbox virtualbox-host-dkms virtualbox-guest-iso linux-headers dkms || true
+sudo usermod -aG vboxusers "$USER" || true
+sudo systemctl enable dkms.service || true
+print_msg "VirtualBox installed"
+
+echo ""
+print_info "[3/9] QEMU/KVM + libvirt..."
+sudo pacman -S --noconfirm --needed qemu-full libvirt virt-manager virt-viewer dnsmasq bridge-utils openbsd-netcat ebtables iptables-nft dmidecode || true
+sudo usermod -aG libvirt,kvm "$USER" || true
+sudo systemctl enable libvirtd.service || true
+sudo systemctl start libvirtd.service || true
+sudo virsh net-autostart default 2>/dev/null || true
+sudo virsh net-start default 2>/dev/null || true
+print_msg "QEMU/KVM installed"
+
+echo ""
+print_info "[4/9] Wine..."
+sudo pacman -S --noconfirm --needed \
+  wine wine-mono wine-gecko winetricks \
+  lib32-mesa lib32-vulkan-intel \
+  lib32-pipewire lib32-libpulse lib32-alsa-plugins lib32-gnutls lib32-sdl2 || true
+print_msg "Wine installed"
+
+echo ""
+print_info "[5/9] Dev tools + Docker..."
+sudo pacman -S --noconfirm --needed \
+  gcc clang cmake make ninja autoconf automake pkg-config \
+  gdb lldb valgrind \
+  git git-lfs \
+  nodejs npm \
+  python python-pip python-virtualenv \
+  jdk-openjdk jre-openjdk \
+  go rust \
+  docker docker-compose \
+  android-tools android-udev \
+  arduino-ide meld || true
+
+sudo systemctl enable docker.service || true
+sudo usermod -aG docker "$USER" || true
+print_msg "Dev tools + Docker installed"
+
+echo ""
+print_info "[6/9] VS Code + GitHub Desktop..."
+yay -S --noconfirm --needed visual-studio-code-bin github-desktop-bin || true
+print_msg "VS Code + GitHub Desktop installed"
+
+echo ""
+print_info "[7/9] Android Studio + Flutter..."
+yay -S --noconfirm --needed android-studio flutter || true
+grep -q 'export PATH="\$PATH:/opt/flutter/bin"' ~/.bashrc 2>/dev/null || {
+  echo "" >> ~/.bashrc
+  echo "# Flutter" >> ~/.bashrc
+  echo 'export PATH="$PATH:/opt/flutter/bin"' >> ~/.bashrc
+}
+print_warning "After reboot run: flutter doctor --android-licenses"
+print_msg "Android Studio + Flutter installed"
+
+echo ""
+print_info "[8/9] Fonts + Office + Media..."
+yay -S --noconfirm --needed ttf-ms-fonts ttf-vista-fonts ttf-tahoma-fonts || true
+sudo pacman -S --noconfirm --needed \
+  noto-fonts noto-fonts-cjk noto-fonts-emoji noto-fonts-extra \
+  ttf-liberation ttf-dejavu ttf-roboto ttf-roboto-mono \
+  ttf-ubuntu-font-family ttf-fira-code ttf-fira-sans ttf-fira-mono \
+  ttf-jetbrains-mono ttf-hack ttf-cascadia-code ttf-droid ttf-inconsolata ttf-opensans \
+  libreoffice-fresh libreoffice-fresh-en-us hunspell hunspell-en_us hyphen hyphen-en \
+  okular poppler-data vlc || true
+print_msg "Fonts + Office + Media installed"
+
+echo ""
+print_info "[9/9] Messaging..."
+sudo pacman -S --noconfirm --needed telegram-desktop || true
+yay -S --noconfirm --needed spotify whatsapp-for-linux viber teams teams-for-linux-bin || true
+print_msg "Messaging installed"
+
+echo ""
+print_info "Restoring normal sudo policy..."
+sudo sed -i 's/%wheel ALL=(ALL:ALL) NOPASSWD: ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers || true
 
 echo ""
 print_msg "╔════════════════════════════════════════════════════╗"
-print_msg "║      INSTALLATION COMPLETE                          ║"
+print_msg "║      POST-INSTALL COMPLETE!                        ║"
 print_msg "╚════════════════════════════════════════════════════╝"
 echo ""
-print_msg "Desktop: MATE + LightDM"
-print_msg "Bootloader: GRUB2 (UEFI) + fallback BOOTX64.EFI (Mac-safe)"
-print_msg "User: $USERNAME"
-print_msg "Timezone: $TIMEZONE"
+print_warning "Reboot recommended!"
+echo ""
+print_info "After reboot run:"
+echo "  flutter doctor --android-licenses"
+echo "  flutter doctor"
 echo ""
 
-print_warning "Reboot required. Remove USB when it restarts."
+read -p "Reboot now? (y/n): " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+  sudo reboot
+fi
+POSTINSTALL
+
+chmod +x "/mnt/home/${USERNAME}/postinstall.sh" || true
+chown "${USERNAME}:${USERNAME}" "/mnt/home/${USERNAME}/postinstall.sh" || true
+
+# Small README
+cat > "/mnt/home/${USERNAME}/README-FIRST-BOOT.txt" << EOF
+After first boot:
+  1) Log in (MATE)
+  2) Open Terminal
+  3) Run:
+       chmod +x ~/postinstall.sh
+       ~/postinstall.sh
+
+This will install: Edge, mbpfan, VS Code, Android Studio, Flutter, VirtualBox, etc.
+EOF
+chown "${USERNAME}:${USERNAME}" "/mnt/home/${USERNAME}/README-FIRST-BOOT.txt" || true
+
+echo ""
+print_msg "╔════════════════════════════════════════════════════╗"
+print_msg "║      BASE INSTALL COMPLETE                         ║"
+print_msg "╚════════════════════════════════════════════════════╝"
+echo ""
+print_msg "Desktop: MATE + LightDM (Slick Greeter)"
+print_msg "Bootloader: GRUB2 menu + Mac-safe BOOTX64.EFI"
+print_msg "User: ${USERNAME}"
+print_msg "Timezone: ${TIMEZONE}"
+echo ""
+print_info "After reboot, run:  ~/postinstall.sh"
+echo ""
+
 read -p "Reboot now? (y/n): " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
   umount -R /mnt || true
+  print_msg "Rebooting... REMOVE USB DRIVE!"
+  sleep 2
   reboot
 else
-  print_info "When ready: umount -R /mnt && reboot"
+  print_info "Run: umount -R /mnt && reboot"
 fi
+```2
